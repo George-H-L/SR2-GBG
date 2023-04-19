@@ -1,0 +1,654 @@
+import time
+import math
+from sr.robot3 import *
+import cv2
+import numpy as np
+R = Robot(auto_start = True)
+servo = R.servo_board.servos[10]
+servo.position = 1
+#SR0KFF is the wheels board
+#SR0WH1J is the claw board
+motorL_2 = R.motor_boards["SR0TBG"].motors[0]
+motorR_2 = R.motor_boards["SR0TBG"].motors[1]
+#motorLeft is left wheel, motorRight is right wheel 
+motorL_1 = R.motor_boards["SR0GJ1B"].motors[0]
+motorR_1 = R.motor_boards["SR0GJ1B"].motors[1]
+#motorClaw is claw, motorVert is vertical movement of claw
+vertex0 = list(range(28))
+vertex1 = list(range(7, 28)) + list(range(7))
+vertex2 = list(range(14, 28)) + list(range(14))
+vertex3 = list(range(21, 28)) + list(range(21))
+
+wallmarkers = vertex3
+R.wait_start()
+time.sleep(1)
+servo.position = -0.7
+def Filter():
+    R.camera.save(R.usbkey / "initial-view.png")
+    img = cv2.imread( "initial-view.png")
+    # It converts the BGR color space of image to HSV color space
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+      
+    # Threshold of gold in HSV space
+    lower_gold = np.array([15, 100, 100])
+    upper_gold = np.array([35, 255, 255])
+  
+    # preparing the mask to overlay
+    mask = cv2.inRange(hsv, lower_gold, upper_gold)
+    
+    cv2.imwrite(str(R.usbkey / 'Result.png'), mask)
+
+def box():
+  Filter()
+  image = cv2.imread("Result.png")
+  original_image= image
+
+  gray= cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+
+  edges= cv2.Canny(gray, 50,200)
+
+  contours, hierarchy= cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+  def get_contour_areas(contours):
+
+    all_areas= []
+
+    for cnt in contours:
+        area= cv2.contourArea(cnt)
+        all_areas.append(area)
+
+    return all_areas
+
+
+  sorted_contours= sorted(contours, key=cv2.contourArea, reverse= True)
+  largest_item= sorted_contours[0]
+  print(largest_item)
+  cv2.drawContours(original_image, largest_item, -1, (255,0,0),10)
+  cv2.imwrite(str(R.usbkey / 'ResultLargest.png'), original_image)
+  return largest_item
+
+
+def drv(p, t):
+  motorL_1.power = -p
+  motorR_1.power = p
+  motorL_2.power = -p
+  motorR_2.power = p
+  time.sleep(t)
+  motorL_1.power = COAST                                              
+  motorR_1.power = COAST
+  motorL_2.power = COAST
+  motorR_2.power = COAST
+  time.sleep(3)
+
+def turn(p, t):
+  motorL_1.power = p
+  motorR_1.power = p
+  motorL_2.power = p
+  motorR_2.power = p
+  time.sleep(t)
+  motorL_1.power = BRAKE
+  motorR_1.power = BRAKE
+  motorL_2.power = BRAKE
+  motorR_2.power = BRAKE
+
+def omni(p, t):
+  motorL_1.power = p
+  motorR_1.power = p
+  motorL_2.power = -p
+  motorR_2.power = -p
+  time.sleep(t)
+  motorL_1.power = COAST                                              
+  motorR_1.power = COAST
+  motorL_2.power = COAST
+  motorR_2.power = COAST
+  time.sleep(3)
+  
+
+def returnDistance(marker):
+  return marker.distance
+
+def isItCube(marker):
+  return marker.id == 73
+
+def isItWall(marker):
+  return marker.id != 73
+
+def returnDistanceToCentre(marker):
+  return abs(marker.pixel_centre.x - 640)
+
+def drvToMarker1():
+  picture = R.camera.see()
+  print(picture)
+  picture = list(filter(isItCube, picture))
+  print(picture)
+  picture.sort(key = returnDistance)
+  print(picture)
+  
+  while len(picture) == 0:
+    turn(-0.5, 0.3)
+    time.sleep(1)
+    picture = R.camera.see()
+    print(picture)
+    picture = list(filter(isItCube, picture))
+    print(picture)
+    picture.sort(key = returnDistance)
+    print(picture)
+  
+  while picture[0].distance > 200:
+    picture = R.camera.see()
+    print(picture)
+    picture = list(filter(isItCube, picture))
+    print(picture)
+    picture.sort(key = returnDistance)
+    print(picture)
+    
+    while len(picture) == 0:
+      turn(-0.5, 0.3)
+      time.sleep(1)
+      picture = R.camera.see()
+      print(picture)
+      picture = list(filter(isItCube, picture))
+      print(picture)
+      picture.sort(key = returnDistance)
+      print(picture)
+    if picture[0].distance <= 1000:
+      break
+  
+    if picture[0].cartesian.y < 0:
+      while picture[0].cartesian.y < 0:
+        turn(0.5, 0.2)
+        time.sleep(0.5)
+        pictureTemp = R.camera.see()
+        print(pictureTemp)
+        pictureTemp = list(filter(isItCube, pictureTemp))
+        print(pictureTemp)
+        pictureTemp.sort(key = returnDistance)
+        print(pictureTemp)
+        if len(pictureTemp) > 0:
+          picture = pictureTemp
+          del pictureTemp
+        time.sleep(0.5)
+    elif picture[0].cartesian.y > 0:
+      while picture[0].cartesian.y > 0:
+        turn(-0.5, 0.2)
+        time.sleep(0.5)
+        pictureTemp = R.camera.see()
+        print(pictureTemp)
+        pictureTemp = list(filter(isItCube, pictureTemp))
+        print(pictureTemp)
+        pictureTemp.sort(key = returnDistance)
+        print(pictureTemp)
+        if len(pictureTemp) > 0:
+          picture = pictureTemp
+          del pictureTemp
+        time.sleep(0.5)
+    print(picture[0].distance)
+  
+    drv(0.35, 1.6)
+  
+
+  servo.position = -1
+  turn(0.8, 10)
+
+def drvToMarker2():
+  picture = R.camera.see()
+  print(picture)
+  picture = list(filter(isItCube, picture))
+  print(picture)
+  picture.sort(key = returnDistanceToCentre)
+  print(picture)
+  LPower = 0.35
+  RPower = 0.35
+  while picture[0].distance > 600:
+    motorL_1.power = -LPower
+    motorR_1.power = RPower
+    motorL_2.power = -LPower
+    motorR_2.power = RPower
+    time.sleep(1)
+    picture = R.camera.see()
+    print(picture)
+    picture = list(filter(isItCube, picture))
+    print(picture)
+    picture.sort(key = returnDistanceToCentre)
+    print(picture)
+    if len(picture) == 0:
+      while len(picture) == 0:
+        time.sleep(2)
+        print(picture)
+        picture = list(filter(isItCube, picture))
+        print(picture)
+        picture.sort(key = returnDistanceToCentre)
+        print(picture)
+        if len(picture) > 0:
+          break
+        motorL_1.power = BRAKE
+        motorR_1.power = BRAKE
+        motorL_2.power = BRAKE
+        motorR_2.power = BRAKE
+        turn(-0.6, 0.3)
+        time.sleep(1)
+        picture = R.camera.see()
+        print(picture)
+        picture = list(filter(isItCube, picture))
+        print(picture)
+        picture.sort(key = returnDistanceToCentre)
+        print(picture)
+    elif picture[0].cartesian.y > 0:
+      RPower = RPower * 0.9
+      LPower = LPower * 1.1
+    elif picture[0].cartesian.y < 0:
+      RPower = RPower * 1.1
+      LPower = LPower * 0.9
+    maxSpeed = 0.3
+    minSpeed = 0.2
+    if RPower > maxSpeed:
+      RPower = maxSpeed
+    if RPower < minSpeed:
+      RPower = minSpeed
+    if LPower > maxSpeed:
+      LPower = maxSpeed
+    if LPower < minSpeed:
+      LPower = minSpeed
+    
+  motorL_1.power = BRAKE
+  motorR_1.power = BRAKE
+  motorL_2.power = BRAKE
+  motorR_2.power = BRAKE
+  time.sleep(3)
+  servo.position = -1
+  time.sleep(1)
+  drv(1, 1)
+
+def drvToMarker3():
+  motorL_1.power = -0.4
+  motorR_1.power = 0.4
+  motorL_2.power = -0.4
+  motorR_2.power = 0.4
+  time.sleep(0.2)
+  motorL_1.power = -0.4/1.5
+  motorR_1.power = 0.4/1.5
+  motorL_2.power = -0.4/1.5
+  motorR_2.power = 0.4/1.5
+  fromRest = False
+  picture = R.camera.see()
+  print(picture)
+  picture = list(filter(isItCube, picture))
+  print(picture)
+  picture.sort(key = returnDistance)
+  print(picture)
+  if len(picture) > 0:
+    while True:
+      if len(picture) == 0:
+        for i in range(5):
+          print(picture)
+          picture = list(filter(isItCube, picture))
+          print(picture)
+          picture.sort(key = returnDistance)
+          print(picture)
+        while len(picture) == 0:
+          motorL_1.power = BRAKE
+          motorR_1.power = BRAKE
+          motorL_2.power = BRAKE
+          motorR_2.power = BRAKE
+          time.sleep(1)
+          drv(-0.4, 0.1)
+          time.sleep(1)
+          picture = R.camera.see()
+          print(picture)
+          picture = list(filter(isItCube, picture))
+          print(picture)
+          picture.sort(key = returnDistance)
+          print(picture)
+          if len(picture) > 0:
+            fromRest = True
+    #if picture[0].distance < 800 and picture[0].distance > 500
+      if picture[0].cartesian.y > 50:
+        if fromRest:
+          motorL_1.power = -0.4
+          motorR_1.power = 0.4
+          motorL_2.power = -0.4
+          motorR_2.power = 0.4
+          time.sleep(0.2)
+        motorL_1.power = -0.7/1.5
+        motorR_1.power = 0.3/1.5
+        motorL_2.power = -0.7/1.5
+        motorR_2.power = 0.3/1.5
+        fromRest = False
+      elif picture[0].cartesian.y < 50:
+        if fromRest:
+          motorL_1.power = -0.4
+          motorR_1.power = 0.4
+          motorL_2.power = -0.4
+          motorR_2.power = 0.4
+          time.sleep(0.2)
+        motorL_1.power = -0.3/1.5
+        motorR_1.power = 0.5/1.5
+        motorL_2.power = -0.3/1.5
+        motorR_2.power = 0.5/1.5
+        fromRest = False
+      else:
+        if fromRest:
+          motorL_1.power = -0.4
+          motorR_1.power = 0.4
+          motorL_2.power = -0.4
+          motorR_2.power = 0.4
+          time.sleep(0.2)
+        motorL_1.power = -0.5/1.5
+        motorR_1.power = 0.5/1.5
+        motorL_2.power = -0.5/1.5
+        motorR_2.power = 0.5/1.5
+        fromRest = False
+      
+      
+      
+
+      time.sleep(1/16)
+      picture = R.camera.see()
+      print(picture)
+      picture = list(filter(isItCube, picture))
+      print(picture)
+      picture.sort(key = returnDistance)
+      print(picture)
+      if len(picture) > 0:
+        if picture[0].distance <= 600:
+          break
+    motorL_1.power = BRAKE
+    motorR_1.power = BRAKE
+    motorL_2.power = BRAKE
+    motorR_2.power = BRAKE
+    servo.position = -1
+    time.sleep(1)
+    drv(1, 3)
+    servo.position = -0.6
+    time.sleep(1)
+    drv(-0.4, 2.2)
+    turn(-0.55, 0.6)
+    time.sleep(1)
+    drv(0.8, 1)
+    servo.position = -0.7
+    turn(-1, 1.5)
+    
+  
+drv(0.6,1.5)
+time.sleep(10)
+drv(-0.4, 0.3)
+time.sleep(1)
+for i in range(5):
+  goldCoords = box()
+  summ = 0
+  for coords in goldCoords:
+    xandy = coords[0][0]
+    xandy = str(xandy)
+    xandy = xandy[0:4]
+    xandy = float(xandy)
+    summ += xandy
+  mean = summ / len(goldCoords)
+  if mean > 640:
+    turn(-0.5, 0.2)
+  elif mean < 640:
+    turn(0.5, 0.2)
+drvToMarker3()
+time.sleep(5)
+# arewestuck = R.camera.see()
+# arewestuck = list(filter(isItWall, arewestuck))
+# time.sleep(20)
+# arewestuck2 = R.camera.see()
+# arewestuck2 = list(filter(isItWall, arewestuck2))
+
+
+# if arewestuck2 == arewestuck:
+#   drv(-0.4, 5)
+#   drvToMarker3()
+
+
+def isIt20(marker):
+  return marker.id == wallmarkers[20]
+
+marker20 = R.camera.see()
+print(marker20)
+marker20 = list(filter(isIt20, marker20))
+print(marker20)
+while len(marker20) == 0:
+  turn(0.5, 0.2)
+  time.sleep(1)
+  marker20 = R.camera.see()
+  print(marker20)
+  marker20 = list(filter(isIt20, marker20))
+  print(marker20)
+
+
+
+
+def safeCheck():
+  safe = True
+  detect = R.camera.see()
+  print(detect)
+  detect = list(filter(isItCube, detect))
+  print(detect)
+  for marker in detect:
+    if (marker.cartesian.y > -180) and (marker.cartesian.y < 180):
+      safe = False
+      break
+  return safe
+
+motorL_1.power = -0.4
+motorR_1.power = 0.4
+motorL_2.power = -0.4
+motorR_2.power = 0.4
+time.sleep(0.2)
+motorL_1.power = -0.4/1.5
+motorR_1.power = 0.4/1.5
+motorL_2.power = -0.4/1.5
+motorR_2.power = 0.4/1.5
+fromRest = False
+picture = R.camera.see()
+print(picture)
+picture = list(filter(isIt20, picture))
+print(picture)
+if len(picture) > 0:
+  while True:
+    if len(picture) == 0:
+      for i in range(5):
+        print(picture)
+        picture = list(filter(isIt20, picture))
+        print(picture)
+      while len(picture) == 0:
+        motorL_1.power = BRAKE
+        motorR_1.power = BRAKE
+        motorL_2.power = BRAKE
+        motorR_2.power = BRAKE
+        time.sleep(1)
+        drv(-0.4, 0.3)
+        time.sleep(1)
+        picture = R.camera.see()
+        print(picture)
+        picture = list(filter(isIt20, picture))
+        print(picture)
+        if len(picture) > 0:
+          fromRest = True
+  #if picture[0].distance < 800 and picture[0].distance > 500
+    if picture[0].cartesian.y > 50:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.7/1.5
+      motorR_1.power = 0.3/1.5
+      motorL_2.power = -0.7/1.5
+      motorR_2.power = 0.3/1.5
+      fromRest = False
+    elif picture[0].cartesian.y < 50:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.3/1.5
+      motorR_1.power = 0.5/1.5
+      motorL_2.power = -0.3/1.5
+      motorR_2.power = 0.5/1.5
+      fromRest = False
+    else:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.5/1.5
+      motorR_1.power = 0.5/1.5
+      motorL_2.power = -0.5/1.5
+      motorR_2.power = 0.5/1.5
+      fromRest = False
+    if safeCheck() == False:
+      time.sleep(1)
+      turn(-0.6, 0.6)
+      time.sleep(1)
+      drv(0.4, 0.4)
+      turn(0.6, 0.6)
+    
+    
+    
+
+    time.sleep(1/16)
+    picture = R.camera.see()
+    print(picture)
+    picture = list(filter(isIt20, picture))
+    print(picture)
+    if len(picture) > 0:
+      if picture[0].distance <= 2200:
+        break
+  motorL_1.power = BRAKE
+  motorR_1.power = BRAKE
+  motorL_2.power = BRAKE
+  motorR_2.power = BRAKE
+
+turn(0.4,1.5)
+for i in range(5):
+  goldCoords = box()
+  summ = 0
+  for coords in goldCoords:
+    xandy = coords[0][0]
+    xandy = str(xandy)
+    xandy = xandy[0:4]
+    xandy = float(xandy)
+    summ += xandy
+  mean = summ / len(goldCoords)
+  if mean > 640:
+    turn(-0.5, 0.2)
+  elif mean < 640:
+    turn(0.5, 0.2)
+
+
+
+motorL_1.power = -0.4
+motorR_1.power = 0.4
+motorL_2.power = -0.4
+motorR_2.power = 0.4
+time.sleep(0.2)
+motorL_1.power = -0.4/1.5
+motorR_1.power = 0.4/1.5
+motorL_2.power = -0.4/1.5
+motorR_2.power = 0.4/1.5
+fromRest = False
+picture = R.camera.see()
+print(picture)
+picture = list(filter(isItCube, picture))
+print(picture)
+picture.sort(key = returnDistanceToCentre)
+print(picture)
+if len(picture) > 0:
+  while True:
+    if len(picture) == 0:
+      for i in range(5):
+        print(picture)
+        picture = list(filter(isItCube, picture))
+        print(picture)
+        picture.sort(key = returnDistanceToCentre)
+        print(picture)
+      while len(picture) == 0:
+        motorL_1.power = BRAKE
+        motorR_1.power = BRAKE
+        motorL_2.power = BRAKE
+        motorR_2.power = BRAKE
+        time.sleep(1)
+        drv(-0.4, 0.1)
+        time.sleep(1)
+        picture = R.camera.see()
+        print(picture)
+        picture = list(filter(isItCube, picture))
+        print(picture)
+        picture.sort(key = returnDistanceToCentre)
+        print(picture)
+        if len(picture) > 0:
+          fromRest = True
+  #if picture[0].distance < 800 and picture[0].distance > 500
+    if picture[0].cartesian.y > 50:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.7/1.5
+      motorR_1.power = 0.3/1.5
+      motorL_2.power = -0.7/1.5
+      motorR_2.power = 0.3/1.5
+      fromRest = False
+    elif picture[0].cartesian.y < 50:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.3/1.5
+      motorR_1.power = 0.5/1.5
+      motorL_2.power = -0.3/1.5
+      motorR_2.power = 0.5/1.5
+      fromRest = False
+    else:
+      if fromRest:
+        motorL_1.power = -0.4
+        motorR_1.power = 0.4
+        motorL_2.power = -0.4
+        motorR_2.power = 0.4
+        time.sleep(0.2)
+      motorL_1.power = -0.5/1.5
+      motorR_1.power = 0.5/1.5
+      motorL_2.power = -0.5/1.5
+      motorR_2.power = 0.5/1.5
+      fromRest = False
+    
+    
+    
+
+    time.sleep(1/16)
+    picture = R.camera.see()
+    print(picture)
+    picture = list(filter(isItCube, picture))
+    print(picture)
+    picture.sort(key = returnDistanceToCentre)
+    print(picture)
+    if len(picture) > 0:
+      if picture[0].distance <= 600:
+        break
+  motorL_1.power = BRAKE
+  motorR_1.power = BRAKE
+  motorL_2.power = BRAKE
+  motorR_2.power = BRAKE
+  servo.position = -1
+  time.sleep(1)
+  drv(1, 3)
+  time.sleep(1)
+  servo.position = -0.6
+  time.sleep(1)
+  drv(-0.4, 2.2)
+  turn(0.55, 0.6)
+  time.sleep(1)
+  drv(0.8, 1)
+  servo.position = -0.7
+  turn(1, 1.5)
